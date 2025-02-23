@@ -34,18 +34,44 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. MongoDB Setup
+### 2. PostgreSQL Setup
 
 ```bash
-# Install MongoDB (Ubuntu/Debian)
+# Install PostgreSQL (Ubuntu/Debian)
 sudo apt update
-sudo apt install mongodb
+sudo apt install postgresql postgresql-contrib
 
-# start MongoDB service
-sudo systemctl start mongodb
+# Start PostgreSQL service
+sudo systemctl start postgresql
 
-# erify ongoDB is running
-sudo systemctl status mongodb
+# Verify PostgreSQL is running
+sudo systemctl status postgresql
+
+# Create database and user
+sudo -u postgres psql
+
+# In PostgreSQL prompt:
+CREATE USER doc_user WITH PASSWORD 'doc123' LOGIN CREATEDB;
+CREATE DATABASE doc_manager OWNER doc_user;
+\c doc_manager
+
+# Create the documents table
+CREATE TABLE documents (
+    id TEXT PRIMARY KEY,
+    content TEXT,
+    embedding FLOAT8[],
+    created_at TIMESTAMP
+);
+
+# Grant necessary permissions
+GRANT ALL PRIVILEGES ON DATABASE doc_manager TO doc_user;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO doc_user;
+GRANT ALL PRIVILEGES ON SCHEMA public TO doc_user;
+
+# Verify setup
+\dt
+\du doc_user
+\q
 ```
 
 ### 3. Running the FastAPI Application
@@ -54,24 +80,7 @@ sudo systemctl status mongodb
 # Development server with auto-reload
 uvicorn main:app --reload
 
-# Production server
-uvicorn main:app --host 0.0.0.0 --port 8000
 
-# With specific host and port
-uvicorn main:app --host 127.0.0.1 --port 8080
-
-# With increased worker count (for production)
-uvicorn main:app --workers 4
-```
-
-### 4. Available URLs After Starting Server
-
-- API Root: http://localhost:8000/
-- Interactive API documentation (Swagger UI): http://localhost:8000/docs
-- Alternative API documentation (ReDoc): http://localhost:8000/redoc
-- Health check: http://localhost:8000/health
-
-### 5. Development Commands
 
 ```bash
 # Install development dependencies
@@ -86,9 +95,11 @@ pytest
 
 Create a `.env` file in your project root:
 ```env
-MONGODB_URL=mongodb://localhost:27017
-DB_NAME=documentdb
-COLLECTION_NAME=documents
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=doc_manager
+DB_USER=doc_user
+DB_PASSWORD=doc123
 PORT=8000
 HOST=127.0.0.1
 ```
@@ -102,7 +113,7 @@ uvicorn main:app --reload --log-level debug
 
 - Common issues and solutions:
   - Port already in use: Change port using `--port XXXX`
-  - MongoDB connection issues: Ensure MongoDB is running
+  - PostgreSQL connection issues: Ensure PostgreSQL is running
   - Import errors: Verify all requirements are installed
 
 ## Postman Collection
@@ -207,7 +218,7 @@ You can import this Postman collection to test the API endpoints:
    ```json
    {
        "id": "doc2",
-       "content": "MongoDB is a NoSQL database that stores data in flexible, JSON-like documents."
+       "content": "PostgreSQL is a powerful, open source object-relational database system."
    }
    ```
 
