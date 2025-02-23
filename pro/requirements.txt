@@ -1,0 +1,8 @@
+langchain
+llama-index
+transformers 
+sentence-transformers 
+scikit-learn 
+psycopg2 
+asyncpg
+fastapi
