@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -7,14 +7,40 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from pymongo.errors import DuplicateKeyError
 from datetime import datetime
+from contextlib import asynccontextmanager
+
+#embedding model 
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+  
+    global client
+    client = AsyncIOMotorClient("mongodb://localhost:27017")
+    yield
+   
+    if client:
+        client.close()
 
 app = FastAPI(
     title="Document Q&A API",
     description="API for document ingestion and question answering using embeddings",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
-@app.get("/")
+class Document(BaseModel):
+    id: str
+    content: str
+
+class Question(BaseModel):
+    question: str
+    document_ids: Optional[List[str]] = None
+
+async def get_db():
+    return client["documentdb"]["documents"]
+
+@app.get("/", include_in_schema=False)
 async def root():
     return {
         "message": "Welcome to Document Q&A API",
@@ -27,93 +53,59 @@ async def root():
         }
     }
 
-# Load a pre-trained embedding model
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# MongoDB connection settings
-MONGODB_URL = "mongodb://localhost:27017"
-DB_NAME = "documentdb"
-COLLECTION_NAME = "documents"
-client = None
-db = None
-
-async def get_db():
-    global client, db
-    if client is None:
-        client = AsyncIOMotorClient(MONGODB_URL)
-        db = client[DB_NAME]
-    return db
-
-class Document(BaseModel):
-    id: str
-    content: str
-
-class Question(BaseModel):
-    question: str
-    document_ids: Optional[List[str]] = None
-
-@app.on_event("startup")
-async def startup():
-    await get_db()
-
-@app.on_event("shutdown")
-async def shutdown():
-    global client
-    if client:
-        client.close()
-
-@app.post("/ingest")
-async def ingest_document(doc: Document):
-    db = await get_db()
-    collection = db[COLLECTION_NAME]
-    
-    # Generate embeddings for the document content
-    embedding = embedding_model.encode(doc.content)
-    
-    # Store the document and its embedding in MongoDB
-    await collection.insert_one({
-        "_id": doc.id,
-        "content": doc.content,
-        "embedding": embedding.tolist()
-    })
-    
-    return {"message": "Document ingested successfully", "id": doc.id}
+@app.post("/ingest", status_code=201)
+async def ingest_document(doc: Document, collection=Depends(get_db)):
+    try:
+        embedding = embedding_model.encode(doc.content)
+        result = await collection.insert_one({
+            "_id": doc.id,
+            "content": doc.content,
+            "embedding": embedding.tolist(),
+            "created_at": datetime.utcnow()
+        })
+        return {"message": "Document ingested successfully", "id": doc.id}
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document with id {doc.id} already exists"
+        )
 
 @app.post("/ask")
-async def ask_question(question: Question):
-    db = await get_db()
-    collection = db[COLLECTION_NAME]
+async def ask_question(question: Question, collection=Depends(get_db)):
+    if not question.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
     
-    # Generate embedding for the question
     question_embedding = embedding_model.encode(question.question)
     
-    # Retrieve relevant documents
     query = {"_id": {"$in": question.document_ids}} if question.document_ids else {}
-    documents = await collection.find(query).to_list(length=None)
+    documents = await collection.find(query).to_list(length=100)  # Limit to 100 docs
     
     if not documents:
-        raise HTTPException(status_code=404, detail="No documents found")
+        raise HTTPException(status_code=404, detail="No documents found matching criteria")
     
-    # Compute similarity between question and documents
     similarities = []
     for doc in documents:
-        doc_embedding = np.array(doc['embedding'])
-        similarity = cosine_similarity([question_embedding], [doc_embedding])[0][0]
-        similarities.append((doc['_id'], doc['content'], similarity))
+        try:
+            doc_embedding = np.array(doc['embedding'], dtype=np.float32)
+            similarity = cosine_similarity([question_embedding], [doc_embedding])[0][0]
+            similarities.append((doc['_id'], doc['content'], similarity))
+        except KeyError:
+            continue
     
-    # Sort by similarity and select the top document
+    if not similarities:
+        raise HTTPException(status_code=404, detail="No valid documents with embeddings found")
+    
     similarities.sort(key=lambda x: x[2], reverse=True)
     top_doc_id, top_doc_content, similarity = similarities[0]
     
-    # Generate an answer using RAG (mock implementation)
-    answer = f"Answer based on document {top_doc_id} (similarity: {similarity:.2f}): {top_doc_content[:100]}..."
-    
     return {
-        "answer": answer,
+        "answer": f"Based on document {top_doc_id}: {top_doc_content[:200]}...",
         "document_id": top_doc_id,
-        "similarity_score": float(similarity)
+        "similarity_score": round(float(similarity), 4)
     }
 
 @app.post("/select-documents")
 async def select_documents(document_ids: List[str]):
+    if not document_ids:
+        raise HTTPException(status_code=400, detail="At least one document ID required")
     return {"selected_document_ids": document_ids}

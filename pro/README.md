@@ -21,10 +21,6 @@ A FastAPI-based REST API that provides document storage and question-answering c
 ### 1. Environment Setup
 
 ```bash
-# Create a new directory for your project
-mkdir pro
-cd pro
-
 # Create a virtual environment
 python -m venv venv
 
@@ -45,10 +41,10 @@ pip install -r requirements.txt
 sudo apt update
 sudo apt install mongodb
 
-# Start MongoDB service
+# start MongoDB service
 sudo systemctl start mongodb
 
-# Verify MongoDB is running
+# erify ongoDB is running
 sudo systemctl status mongodb
 ```
 
@@ -84,14 +80,7 @@ pip install pytest pytest-asyncio httpx
 # Run tests
 pytest
 
-# Check code style
-pip install flake8
-flake8 .
 
-# Format code
-pip install black
-black .
-```
 
 ### 6. Environment Variables (Optional)
 
